@@ -1,33 +1,15 @@
 import cv2
 from cv2 import aruco
 import numpy as np
-
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
+from functools import reduce
 
 
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
-
-
-def nothing(*arg):
-    pass
-
-def my_video():
+def calibrate_camera():
     cv2.namedWindow("result")
-    # cv2.namedWindow("settings")  # создаем окно настроек
-    #
-    # cv2.createTrackbar('h1', 'settings', 0, 255, nothing)
-    # cv2.createTrackbar('s1', 'settings', 0, 255, nothing)
-    # cv2.createTrackbar('v1', 'settings', 0, 255, nothing)
-    # cv2.createTrackbar('h2', 'settings', 255, 255, nothing)
-    # cv2.createTrackbar('s2', 'settings', 255, 255, nothing)
-    # cv2.createTrackbar('v2', 'settings', 255, 255, nothing)
-    # crange = [0, 0, 0, 0, 0, 0]
 
     # генерируется список маркеров
     dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
+    #dictionary = aruco.Dictionary_get(aruco.DICT_4X4_250)
 
     ## доска нужна для калибровки
     board = aruco.GridBoard_create(
@@ -35,93 +17,94 @@ def my_video():
         markersY=7,
         markerLength=0.04,
         markerSeparation=0.01,
-        dictionary=aruco_dict)
+        dictionary=dictionary)
+
+    boardImg = board.draw((1000, 1000))
+
+    cv2.imwrite("boardImg.png", boardImg)
 
     cap = cv2.VideoCapture(0)
     cap.set(3, 1280)
     cap.set(4, 700)
-    #
-    hsv_min = np.array((65, 21, 23), np.uint8)
-    hsv_max = np.array((142, 88, 55), np.uint8)
-    id = np.array([1])
-    color_yellow = (0, 255, 255)
-    myKok = aruco.custom_dictionary(11, 4)
-    lalka = aruco.drawMarker(myKok, 3, 35)
-    cv2.imwrite("lol.png", lalka)
+    # #мой кастомный маркер
+    # my_marker = aruco.custom_dictionary(11, 4)
+    # my_marker_img = aruco.drawMarker(my_marker, 3, 35)
+    # cv2.imwrite("my_marker_img.png", my_marker_img)
 
     while True:
         flag, img = cap.read()
-        img_copy = img.copy()
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        # hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        if flag:
+            img_copy = img.copy()
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # считываем значения бегунков
-        h1 = cv2.getTrackbarPos('h1', 'settings')
-        s1 = cv2.getTrackbarPos('s1', 'settings')
-        v1 = cv2.getTrackbarPos('v1', 'settings')
-        h2 = cv2.getTrackbarPos('h2', 'settings')
-        s2 = cv2.getTrackbarPos('s2', 'settings')
-        v2 = cv2.getTrackbarPos('v2', 'settings')
-        #
-        # формируем начальный и конечный цвет фильтра
-        # hsv_min = np.array((h1, s1, v1), np.uint8)
-        # hsv_max = np.array((h2, s2, v2), np.uint8)
+            parameters = aruco.DetectorParameters_create()
 
-        # img = cv2.flip(img, 1)  # отражение кадра вдоль оси Y
-        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-        # применяем цветовой фильтр
-        thresh = cv2.inRange(hsv, hsv_min, hsv_max)
+            # corners - 2D вектора углов маркера
+            # ids - id обнаруженных маркеров
+            corners, ids, reject = aruco.detectMarkers(gray, dictionary, parameters=parameters)
 
-        # dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
-        # dictionary = aruco.custom_dictionary(11, 4)
-        # lalka = aruco.drawMarker(dictionary, 0, 35)
-        # cv2.imwrite("lol.png", lalka)
+            #отрисовка найдённых маркеров
+            aruco.drawDetectedMarkers(img_copy, corners, ids)
 
-        corners, ids, reject = aruco.detectMarkers(img, myKok)
+            if ids is not None and corners is not None and len(ids) == len(board.ids):
+                inverse_athenian_matrices = []
+                counter, corners_list, id_list = [], corners, ids
 
-        aruco.drawDetectedMarkers(img_copy, corners, ids)
+                corners_list = np.vstack((corners_list, corners))
+                id_list = np.vstack((id_list, ids))
 
-        ret, matrix, distCoeff, _, _ = cv2.calibrateCamera(
-            objectPoints=board.objPoints,
-            imagePoints=corners,
-            imageSize=gray.shape,  # [::-1], # may instead want to use gray.size
-            cameraMatrix=None,
-            distCoeffs=None
-        )
+                counter.append(len(ids))
+                counter = np.array(counter)
 
-        # ищем контуры и складируем их в переменную contours
-        # contours0, hierarchy = cv2.findContours(thresh.copy(), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        #
-        # # отображаем контуры поверх изображения
-        # cv2.drawContours(img, contours0, -1, (255, 0, 0), 3, cv2.LINE_AA, hierarchy, 1)
-        # for cnt in contours0:
-        #     rect = cv2.minAreaRect(cnt)  # пытаемся вписать прямоугольник
-        #     box = cv2.boxPoints(rect)  # поиск четырех вершин прямоугольника
-        #     box = np.int0(box)  # округление координат
-        #     cv2.drawContours(img, [box], 0, (255, 0, 0), 2)  # рисуем прямоугольник
+                # Калибровка камеры
+                # distCoeff - вектор коэффициентов искажения
+                flag, cameraMatrix, distCoeff, _, _ = aruco.calibrateCameraAruco(
+                    corners=corners_list,
+                    ids=id_list,
+                    counter=counter,
+                    board=board,
+                    imageSize=gray.shape,
+                    cameraMatrix=None,
+                    distCoeffs=None)
 
-        # moments = cv2.moments(thresh, 1)
-        # dM01 = moments['m01']
-        # dM10 = moments['m10']
-        # dArea = moments['m00']
-        # if dArea > 100:
-        #     x = int(dM10 / dArea)
-        #     y = int(dM01 / dArea)
-        #     cv2.circle(img, (x, y), 5, color_yellow, 2)
-        #     cv2.putText(img, "%d-%d" % (x, y), (x + 10, y - 10),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 1, color_yellow, 2)
-        cv2.imshow("result", img_copy)#img)
+                # получаем вектора поворотов и положенией маркеров относительно системы координат камеры
+                rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, 0.04, cameraMatrix, distCoeff)
 
-        if cv2.waitKey(5) == 27:
-            break
+                for i in range(len(rvecs)):
+                    rvec = rvecs[i]
+                    tvec = tvecs[i]
+                    #Функция, которая преобразует вектор поворота в матрицу поворота, и обратно
+                    rvec_mat, _ = cv2.Rodrigues(rvec)
+                    #конкатенируем матрицы и получаем квадратную матрицу для аффинного преобразования
+                    rotate_matrix = np.vstack((np.hstack((rvec_mat, tvec.T)), np.array([0, 0, 0, 1])))
+                    #получаем обратную матрицу
+                    inv_rotate_matrix = np.linalg.inv(rotate_matrix)
+                    # собираем все матрицы для дальнейшего более точного подсчёта обратной матрицы
+                    inverse_athenian_matrices.append(inv_rotate_matrix)
+
+                inverse_rvecs, inverse_tvecs = [], []
+
+                for matrix in inverse_athenian_matrices:
+                    rvec_mat = matrix[0:3, 0:3]
+                    tvec = matrix[0:3, 3]
+                    rvec, _ = cv2.Rodrigues(rvec_mat)
+                    inverse_rvecs.append(rvec)
+                    inverse_tvecs.append(tvec.T)
+
+                # Берём среднее арифметическое по всем обратным векторам поворота
+                r_average = np.average(np.array(inverse_rvecs), axis=0)
+                # Берём среднее арифметическое по всем обратным векторам положения
+                t_average = np.average(np.array(inverse_tvecs), axis=0)
+                r_mat_average, _ = cv2.Rodrigues(r_average)
+                inverse_rotate_matrix_average = np.vstack((np.hstack((r_mat_average, np.array([t_average]).T)), np.array([0, 0, 0, 1])))
+
+            cv2.imshow("result", img_copy)
+
+            if cv2.waitKey(5) == 27:
+                break
     cap.release()
     cv2.destroyAllWindows()
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    # print_hi('PyCharm')
-    for i in dir(aruco):
-        print(i + "\n")
-    my_video()
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+if __name__ == '__main__':
+    calibrate_camera()
