@@ -1,11 +1,21 @@
 import cv2
 from cv2 import aruco
 import numpy as np
-from functools import reduce
+from threading import Thread
 
 
-def calibrate_camera():
-    cv2.namedWindow("result")
+class CameraThread(Thread):
+
+    def __init__(self, camera_number):
+        Thread.__init__(self)
+        self.camera_counter = camera_number
+
+    def run(self) -> None:
+        calibrate_camera(self.camera_counter)
+
+
+def calibrate_camera(camera_counter):
+    cv2.namedWindow(f'result{camera_counter}')
 
     # генерируется список маркеров
     dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
@@ -23,7 +33,7 @@ def calibrate_camera():
 
     cv2.imwrite("boardImg.png", boardImg)
 
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(camera_counter)
     cap.set(3, 1280)
     cap.set(4, 700)
     # #мой кастомный маркер
@@ -79,6 +89,9 @@ def calibrate_camera():
                 # получаем вектора поворотов и положенией маркеров относительно системы координат камеры
                 rvecs, tvecs, _objPoints = aruco.estimatePoseSingleMarkers(corners, 0.04, cameraMatrix, distCoeff)
 
+                # списки матриц поворотов и векторов переноса
+                inverse_rvecs, inverse_tvecs = [], []
+
                 for i in range(len(rvecs)):
                     rvec = rvecs[i]
                     tvec = tvecs[i]
@@ -88,15 +101,14 @@ def calibrate_camera():
                     rotate_matrix = (np.vstack((np.hstack((rvec_mat, tvec.T)), np.array([0, 0, 0, 1])))).dot(transform_matrix)
                     #получаем обратную матрицу
                     inv_rotate_matrix = np.linalg.inv(rotate_matrix)
-                    # собираем все матрицы для дальнейшего более точного подсчёта обратной матрицы
-                    inverse_affine_matrices.append(inv_rotate_matrix)
 
-                inverse_rvecs, inverse_tvecs = [], []
+                    #берём срез матрицы
+                    rvec_mat = inv_rotate_matrix[0:3, 0:3]
+                    tvec = inv_rotate_matrix[0:3, 3]
 
-                for matrix in inverse_affine_matrices:
-                    rvec_mat = matrix[0:3, 0:3]
-                    tvec = matrix[0:3, 3]
+                    #преобразуем матрицу поворота в вектор поворота
                     rvec, _ = cv2.Rodrigues(rvec_mat)
+
                     inverse_rvecs.append(rvec)
                     inverse_tvecs.append(tvec.T)
 
@@ -104,9 +116,15 @@ def calibrate_camera():
                 r_average = np.average(np.array(inverse_rvecs), axis=0)
                 # Берём среднее арифметическое по всем обратным векторам положения
                 t_average = np.average(np.array(inverse_tvecs), axis=0)
+                # получаем матрицу поворота на основе усредненного вектора поворота
                 r_mat_average, _ = cv2.Rodrigues(r_average)
-                inverse_rotate_matrix_average = np.vstack((np.hstack((r_mat_average, np.array([t_average]).T)), np.array([0, 0, 0, 1])))
-            cv2.imshow("result", img_copy)
+                # получаем обратну усреднённую матрицу на основе усреднённой матрицы поворота и усреднённого вектора переноса
+                inverse_rotate_matrix_average = np.hstack((r_mat_average, np.array([t_average]).T))
+
+                # Координаты i-го маркера в мировой системе координат
+                world_coordinates = inverse_rotate_matrix_average.dot(np.vstack((tvecs[1].T, np.array([1]))))[0:3, 3]
+
+            cv2.imshow(f'result{camera_counter}', img_copy)
 
             if cv2.waitKey(5) == 27:
                 break
@@ -115,4 +133,9 @@ def calibrate_camera():
 
 
 if __name__ == '__main__':
-    calibrate_camera()
+    thread0 = CameraThread(0)
+    #thread1 = CameraThread(1)
+    thread0.start()
+    #thread1.start()
+    thread0.join()
+    #thread1.join()
