@@ -4,6 +4,7 @@ import numpy as np
 from threading import Thread
 import typing
 
+from bluetooth import *
 marker_size = 7
 marker_separator = 4
 
@@ -47,12 +48,16 @@ class CameraThread(Thread):
         while True:
             flag, img = cap.read()
             if flag:
-                img_copy = img.copy()
-                gray = cv2.cvtColor(img_copy, cv2.COLOR_BGR2GRAY)
+                alpha = 1.5
+                beta = 20
+                #img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
+                kernel = np.array([[-1,-1,-1], [-1, 9,-1], [-1,-1,-1]])
+                #img = cv2.filter2D(img, -1, kernel)
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 self.transition_matrix_from_camera_to_world = None
-                self.find_markers_and_markers_coordinates(img_copy, gray)
+                self.find_markers_and_markers_coordinates(gray)
 
-                cv2.imshow(f'result{self.camera_counter}', img_copy)
+                cv2.imshow(f'result{self.camera_counter}', gray)
 
             if cv2.waitKey(5) == 27:
                 break
@@ -61,25 +66,26 @@ class CameraThread(Thread):
         cv2.destroyAllWindows()
 
     # Метод для нахождения Aruco маркеров и их координат в мировой системе счисления
-    def find_markers_and_markers_coordinates(self, img, gray):
+    def find_markers_and_markers_coordinates(self, gray):
         # corners - 2D вектора углов маркера
         # ids - id обнаруженных маркеров
         self.corners, self.ids, reject = self.detect_markers(gray)
 
-        # отрисовка найдённых маркеров
-        aruco.drawDetectedMarkers(img, self.corners, self.ids)
-
         if self.ids is not None and self.corners is not None:
+
+            # отрисовка найдённых маркеров
+            aruco.drawDetectedMarkers(gray, self.corners, self.ids)
+
             if self.camera_martix is None:
-                self.calibrate_camera(np.array([len(self.ids)]), gray.shape)
+                self.calibrate_camera(np.array([len(self.ids)]), gray.shape[::-1])
+            else:
+                self.find_rvecs_and_tvecs()
 
-            self.find_rvecs_and_tvecs()
+                self.convert_data_to_marker()
 
-            self.convert_data_to_marker()
+                self.find_transition_matrix()
 
-            self.find_transition_matrix()
-
-            self.find_world_coordinates_for_all_markers()
+                self.find_world_coordinates_for_all_markers()
 
     def convert_data_to_marker(self):
         self.static_marker_index = np.where(self.ids == static_marker_id)[0][0] if self.ids.__contains__(static_marker_id) else - 1
@@ -95,7 +101,8 @@ class CameraThread(Thread):
     # Калибровка камеры
     def calibrate_camera(self, counter, shape):
         # distCoeff - вектор коэффициентов искажения
-        _, self.camera_martix, self.dist_coeff, _, _ = aruco.calibrateCameraAruco(
+        if len(self.ids) == len(board.ids):
+            _, self.camera_martix, self.dist_coeff, _, _ = aruco.calibrateCameraAruco(
             corners=self.corners, ids=self.ids, counter=counter, board=board, imageSize=shape,
             cameraMatrix=None, distCoeffs=None)
 
@@ -135,9 +142,18 @@ class CameraThread(Thread):
                 world_coordinates = self.transition_matrix_from_camera_to_world.dot(
                         np.vstack((marker.tvecs.T, np.array([1]))))[0:3, 0]
                 print(world_coordinates)
+                #connection.send(world_coordinates)
 
+
+def connect():
+    global connection
+    server_socket = BluetoothSocket(RFCOMM)
+    server_socket.bind(('', 5))
+    server_socket.listen(1)
+    #connection, address = server_socket.accept()
 
 if __name__ == '__main__':
+    connect()
     thread0 = CameraThread(0)
     # thread1 = CameraThread(1)
     thread0.start()
