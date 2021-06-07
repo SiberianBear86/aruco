@@ -55,7 +55,6 @@ class CameraThread(Thread):
                 break
 
         cap.release()
-        cv2.destroyAllWindows()
 
     # Метод для нахождения Aruco маркеров и их координат в мировой системе счисления
     def find_markers_and_markers_coordinates(self, gray):
