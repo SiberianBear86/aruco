@@ -3,14 +3,15 @@ from cv2 import aruco
 import numpy as np
 from threading import Thread
 import typing
+import time
+from algorithm import Algorithm
+from server_socket import *
 
-from bluetooth import *
 marker_size = 7
 marker_separator = 4
 
 # список Aruco маркеров
 dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_250)
-# dictionary = aruco.Dictionary_get(aruco.DICT_4X4_250)
 
 # калибровочная доска
 board = aruco.GridBoard_create(markersX=5, markersY=7, markerLength=marker_size, markerSeparation=marker_separator,
@@ -20,7 +21,7 @@ parameters = aruco.DetectorParameters_create()
 
 static_marker_id = 3
 
-
+# объект, содержащий в себе информацию об id маркера, векторе поворота и векторе переноса
 class Marker(typing.NamedTuple):
     id: int
     rvecs: np.ndarray
@@ -28,12 +29,14 @@ class Marker(typing.NamedTuple):
 
 
 class CameraThread(Thread):
-    def __init__(self, camera_number):
+    def __init__(self, camera_number, calibrate_marker_coordinate):
         Thread.__init__(self)
         self.camera_counter = camera_number
         self.camera_martix = None
         self.dist_coeff = None
         self.transition_matrix_from_camera_to_world = None
+        self.algorithm = Algorithm()
+        self.calibrate_marker_coordinate = calibrate_marker_coordinate
 
     def run(self) -> None:
         self.start_processing_frames()
@@ -46,18 +49,12 @@ class CameraThread(Thread):
         cap.set(4, 700)
 
         while True:
+            time.sleep(1)
             flag, img = cap.read()
             if flag:
-                alpha = 1.5
-                beta = 20
-                #img = cv2.convertScaleAbs(img, alpha=alpha, beta=beta)
-                kernel = np.array([[-1,-1,-1], [-1, 9,-1], [-1,-1,-1]])
-                #img = cv2.filter2D(img, -1, kernel)
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 self.transition_matrix_from_camera_to_world = None
                 self.find_markers_and_markers_coordinates(gray)
-
-                cv2.imshow(f'result{self.camera_counter}', gray)
 
             if cv2.waitKey(5) == 27:
                 break
@@ -101,8 +98,7 @@ class CameraThread(Thread):
     # Калибровка камеры
     def calibrate_camera(self, counter, shape):
         # distCoeff - вектор коэффициентов искажения
-        if len(self.ids) == len(board.ids):
-            _, self.camera_martix, self.dist_coeff, _, _ = aruco.calibrateCameraAruco(
+        _, self.camera_martix, self.dist_coeff, _, _ = aruco.calibrateCameraAruco(
             corners=self.corners, ids=self.ids, counter=counter, board=board, imageSize=shape,
             cameraMatrix=None, distCoeffs=None)
 
@@ -113,15 +109,14 @@ class CameraThread(Thread):
 
     # Находим маркеру переходу из системы координат камеры в мировую систему координат
     def find_transition_matrix(self):
+        # базисные единичные вектора для калибровки по статическому маркеру
         x = np.array([1, 0, 0]).reshape(1, 3)
         y = np.array([0, 1, 0]).reshape(1, 3)
         z = np.array([0, 0, 1]).reshape(1, 3)
 
-        center_of_marker = np.array([[3], [3], [3]])
-
         # находим матрицу перехода из мировой системы в систему маркера
         transform_matrix = np.linalg.pinv(
-            self.concatenate_by_vert_and_horiz(np.vstack((np.vstack((x, y)), z)), center_of_marker)
+            self.concatenate_by_vert_and_horiz(np.vstack((np.vstack((x, y)), z)), self.calibrate_marker_coordinate)
         )
 
         if self.static_marker is not None:
@@ -138,25 +133,19 @@ class CameraThread(Thread):
     def find_world_coordinates_for_all_markers(self):
         # Координаты i-го маркера в мировой системе координат
         if self.transition_matrix_from_camera_to_world is not None:
-            for marker in self.markers:
-                world_coordinates = self.transition_matrix_from_camera_to_world.dot(
-                        np.vstack((marker.tvecs.T, np.array([1]))))[0:3, 0]
-                print(world_coordinates)
-                #connection.send(world_coordinates)
+            coordinate = [(marker.id, self.transition_matrix_from_camera_to_world.dot(
+                        np.vstack((marker.tvecs.T, np.array([1]))))[0:3, 0]) for marker in self.markers]
+            self.algorithm.initialise_coordinate(coordinate)
+            connection.send(coordinate)
 
-
-def connect():
-    global connection
-    server_socket = BluetoothSocket(RFCOMM)
-    server_socket.bind(('', 5))
-    server_socket.listen(1)
-    #connection, address = server_socket.accept()
 
 if __name__ == '__main__':
-    connect()
-    thread0 = CameraThread(0)
-    # thread1 = CameraThread(1)
+    first_marker_coordinate = np.array([[0], [0], [50]])
+    second_marker_coordinate = np.array([[160], [200], [50]])
+    initialise_server_socket()
+    thread0 = CameraThread(0, first_marker_coordinate)
+    thread1 = CameraThread(1, second_marker_coordinate)
     thread0.start()
-    # thread1.start()
+    thread1.start()
     thread0.join()
-    # thread1.join()
+    thread1.join()
