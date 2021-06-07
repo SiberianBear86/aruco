@@ -42,12 +42,6 @@ class CameraThread(Thread):
         self.start_processing_frames()
 
     def start_processing_frames(self):
-        cv2.namedWindow(f'result{self.camera_counter}')
-
-        cap = cv2.VideoCapture(self.camera_counter)
-        cap.set(3, 1280)
-        cap.set(4, 700)
-
         while True:
             time.sleep(1)
             flag, img = cap.read()
